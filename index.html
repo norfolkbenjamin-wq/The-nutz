@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShellShock Live - Aim Tracer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            font-family: 'Arial', sans-serif;
+            overflow: hidden;
+        }
+
+        #canvas {
+            flex: 1;
+            display: block;
+            background: linear-gradient(to bottom, #87CEEB 0%, #E0F6FF 100%);
+            cursor: crosshair;
+        }
+
+        .controls {
+            background: rgba(0, 0, 0, 0.8);
+            color: #fff;
+            padding: 15px 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            border-top: 2px solid #00ff00;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .control-group label {
+            min-width: 120px;
+            font-weight: bold;
+            color: #00ff00;
+        }
+
+        .control-group input[type="range"] {
+            flex: 1;
+            max-width: 150px;
+        }
+
+        .control-group input[type="number"] {
+            width: 70px;
+            padding: 5px;
+            background: #333;
+            color: #fff;
+            border: 1px solid #00ff00;
+            border-radius: 3px;
+        }
+
+        .control-group span {
+            min-width: 50px;
+            color: #ffff00;
+            font-weight: bold;
+        }
+
+        .info-panel {
+            background: rgba(0, 0, 0, 0.9);
+            color: #00ff00;
+            padding: 10px 20px;
+            display: flex;
+            gap: 30px;
+            flex-wrap: wrap;
+            border-top: 1px solid #00ff00;
+            font-size: 14px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .info-item {
+            display: flex;
+            gap: 10px;
+        }
+
+        .info-label {
+            color: #ffff00;
+        }
+
+        .reset-btn {
+            padding: 8px 15px;
+            background: #00ff00;
+            color: #000;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+
+        .reset-btn:hover {
+            background: #ffff00;
+            transform: scale(1.05);
+        }
+
+        .reset-btn:active {
+            transform: scale(0.95);
+        }
+
+        .title {
+            background: rgba(0, 0, 0, 0.9);
+            color: #00ff00;
+            padding: 10px 20px;
+            border-bottom: 2px solid #00ff00;
+            font-size: 18px;
+            font-weight: bold;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="title">🎮 ShellShock Live - Aim Tracer | Drag green dot (your tank) and red dot (enemy tank)</div>
+    <canvas id="canvas"></canvas>
+    
+    <div class="controls">
+        <div class="control-group">
+            <label>Wind Speed:</label>
+            <input type="range" id="windSlider" min="-50" max="50" value="0">
+            <span id="windValue">0 m/s</span>
+        </div>
+        
+        <div class="control-group">
+            <label>Wind Direction:</label>
+            <input type="range" id="windDirSlider" min="0" max="360" value="0">
+            <span id="windDirValue">0°</span>
+        </div>
+        
+        <div class="control-group">
+            <label>Gun Angle:</label>
+            <input type="range" id="angleSlider" min="0" max="180" value="45">
+            <span id="angleValue">45°</span>
+        </div>
+        
+        <div class="control-group">
+            <label>Muzzle Velocity:</label>
+            <input type="range" id="velocitySlider" min="10" max="100" value="50">
+            <span id="velocityValue">50 m/s</span>
+        </div>
+
+        <div class="control-group">
+            <label>Gravity:</label>
+            <input type="range" id="gravitySlider" min="5" max="30" value="9.8" step="0.1">
+            <span id="gravityValue">9.8 m/s²</span>
+        </div>
+
+        <button class="reset-btn" onclick="resetPositions()">Reset Positions</button>
+    </div>
+
+    <div class="info-panel">
+        <div class="info-item">
+            <span class="info-label">Distance:</span>
+            <span id="distance">0 m</span>
+        </div>
+        <div class="info-item">
+            <span class="info-label">Flight Time:</span>
+            <span id="flightTime">0 s</span>
+        </div>
+        <div class="info-item">
+            <span class="info-label">Max Height:</span>
+            <span id="maxHeight">0 m</span>
+        </div>
+        <div class="info-item">
+            <span class="info-label">Wind Effect:</span>
+            <span id="windEffect">0 m</span>
+        </div>
+        <div class="info-item">
+            <span class="info-label">Your Tank:</span>
+            <span id="playerTankPos" style="color: #00ff00;">0, 0</span>
+        </div>
+        <div class="info-item">
+            <span class="info-label">Enemy Tank:</span>
+            <span id="enemyTankPos" style="color: #ff0000;">0, 0</span>
+        </div>
+    </div>
+
+    <script src="physics.js"></script>
+</body>
+</html>
