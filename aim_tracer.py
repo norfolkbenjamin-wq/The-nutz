@@ -67,28 +67,39 @@ class Physics:
         self.scale = 1.5
     
     def calculate_optimal_angle(self, player_pos: Vector2, enemy_pos: Vector2) -> float:
-        """Calculate optimal firing angle to hit target"""
-        dx = enemy_pos.x - player_pos.x
-        dy = player_pos.y - enemy_pos.y
+        """Calculate optimal firing angle to hit target using ballistic formula"""
+        # Get horizontal and vertical distances in game units
+        dx = (enemy_pos.x - player_pos.x) / self.scale  # Horizontal distance
+        dy = (player_pos.y - enemy_pos.y) / self.scale  # Vertical distance (y increases downward in Tkinter)
         
-        distance = math.sqrt(dx ** 2 + dy ** 2) / self.scale
+        v = self.velocity
+        g = self.gravity
         
-        if self.velocity == 0:
+        if v == 0:
             return 45.0
         
-        horizontal_dist = dx / self.scale
-        vertical_dist = dy / self.scale
+        # Ballistic trajectory formula
+        # y = x*tan(θ) - (g*x²)/(2*v²*cos²(θ))
+        # Rearranged to find angle: tan(2θ) = (2*v²)/(g*x) when y=0
+        # For hitting a target at (dx, dy):
+        # tan(θ) = (v²/g * ± sqrt((v⁴/g²) - dx² - (2*v²*dy/g))) / dx
         
-        # Calculate angle towards target
-        angle_rad = math.atan2(vertical_dist, horizontal_dist)
+        discriminant = (v ** 4) - (g ** 2) * (dx ** 2) - (2 * g * v ** 2 * dy)
         
-        # Adjust for ballistic arc
-        max_range_angle = math.pi / 4
-        angle_rad = (angle_rad + max_range_angle) / 2
+        if discriminant < 0:
+            # Can't reach target, aim as high as possible
+            return 85.0
         
-        # Convert to degrees and clamp
+        # Use the higher angle solution (more arc)
+        sqrt_disc = math.sqrt(discriminant)
+        tan_theta = (v ** 2 + sqrt_disc) / (g * dx) if dx != 0 else 1.0
+        
+        # Calculate angle in radians then convert to degrees
+        angle_rad = math.atan(tan_theta)
         angle_deg = (angle_rad * 180) / math.pi
-        angle_deg = max(0, min(180, angle_deg))
+        
+        # Clamp between 0 and 90 degrees (upward shot)
+        angle_deg = max(0, min(90, angle_deg))
         
         return angle_deg
     
@@ -127,7 +138,7 @@ class Physics:
     def calculate_stats(self, player_pos: Vector2, enemy_pos: Vector2, trajectory: List[Vector2]) -> dict:
         """Calculate ballistics statistics"""
         if not trajectory:
-            return {'distance': 0, 'flight_time': 0, 'max_height': 0, 'wind_effect': 0}
+            return {'distance': 0, 'flight_time': 0, 'max_height': 0, 'wind_effect': 0, 'accuracy': 0}
         
         dx = enemy_pos.x - player_pos.x
         dy = enemy_pos.y - player_pos.y
@@ -137,7 +148,7 @@ class Physics:
         
         max_height = 0
         for point in trajectory:
-            height = point.y
+            height = abs(point.y - player_pos.y) / self.scale
             if height > max_height:
                 max_height = height
         
@@ -148,7 +159,7 @@ class Physics:
         if trajectory:
             last_point = trajectory[-1]
             impact_dist = last_point.distance_to(enemy_pos)
-            accuracy = max(0, 100 - impact_dist / 2)
+            accuracy = max(0, 100 - (impact_dist / 3))
         else:
             accuracy = 0
         
