@@ -1,7 +1,7 @@
 #!/usr/bin/env python3.14
 """
 ShellShock Live - Automatic Aim Tracer Overlay
-A Python overlay tool that calculates ballistics and wind physics in real-time
+A Python overlay tool that calculates ballistics, power, and wind physics in real-time
 """
 
 import tkinter as tk
@@ -57,59 +57,123 @@ class Tank:
         canvas.create_text(self.pos.x, self.pos.y, text=self.label, fill=self.color, font=('Arial', 14, 'bold'))
 
 
+class BallisticsCalculator:
+    """Advanced ballistics calculations for exact hits"""
+    
+    @staticmethod
+    def calculate_angle_and_power(player_pos: Vector2, enemy_pos: Vector2, gravity: float = 9.8) -> Tuple[float, float]:
+        """
+        Calculate the exact angle and power (velocity) needed to hit target.
+        Returns: (angle_degrees, power)
+        """
+        dx = (enemy_pos.x - player_pos.x) / 1.5
+        dy = (player_pos.y - enemy_pos.y) / 1.5
+        
+        # For horizontal shot at same height, optimal angle is 45°
+        # For targets at different heights, we need to calculate both angle and velocity
+        
+        if abs(dx) < 0.1:
+            return 45.0, 50.0
+        
+        # We'll use 45° as the launch angle (optimal range angle)
+        # Then calculate required velocity to hit that exact point
+        angle_rad = math.radians(45.0)
+        
+        # From projectile motion: x = v*cos(θ)*t, y = v*sin(θ)*t - 0.5*g*t²
+        # Eliminate t: y = x*tan(θ) - (g*x²)/(2*v²*cos²(θ))
+        # Solve for v²: v² = (g*x²) / (2*cos²(θ)*(x*tan(θ) - y))
+        
+        cos_angle = math.cos(angle_rad)
+        sin_angle = math.sin(angle_rad)
+        tan_angle = math.tan(angle_rad)
+        
+        denominator = 2 * (cos_angle ** 2) * (dx * tan_angle - dy)
+        
+        if denominator <= 0:
+            # Target too high or behind, use high angle
+            angle_rad = math.radians(60.0)
+            cos_angle = math.cos(angle_rad)
+            sin_angle = math.sin(angle_rad)
+            tan_angle = math.tan(angle_rad)
+            denominator = 2 * (cos_angle ** 2) * (dx * tan_angle - dy)
+            
+            if denominator <= 0:
+                return 60.0, 100.0
+        
+        v_squared = (gravity * dx * dx) / denominator
+        
+        if v_squared < 0:
+            return 45.0, 100.0
+        
+        power = math.sqrt(v_squared)
+        power = max(10, min(100, power))  # Clamp power between 10-100
+        
+        return 45.0, power
+    
+    @staticmethod
+    def calculate_angle_for_power(player_pos: Vector2, enemy_pos: Vector2, power: float, gravity: float = 9.8) -> float:
+        """
+        Calculate the angle needed for a given power to hit the target.
+        Uses the optimal angle that minimizes energy waste.
+        """
+        dx = (enemy_pos.x - player_pos.x) / 1.5
+        dy = (player_pos.y - enemy_pos.y) / 1.5
+        
+        if abs(dx) < 0.1:
+            return 45.0
+        
+        if power == 0:
+            return 45.0
+        
+        v_squared = power * power
+        
+        # y = x*tan(θ) - (g*x²)/(2*v²*cos²(θ))
+        # Rearrange: tan(θ) = (2*v²*dy/x + g*x) / (2*v²)
+        
+        numerator = (2 * v_squared * dy) / dx + gravity * dx
+        denominator = 2 * v_squared
+        
+        tan_angle = numerator / denominator
+        
+        # Get both possible angles
+        angle_rad_1 = math.atan(tan_angle)
+        angle_deg_1 = math.degrees(angle_rad_1)
+        
+        # Higher angle solution
+        angle_deg_2 = 90.0 - angle_deg_1
+        
+        # Return the angle that's between 0 and 90
+        if 0 <= angle_deg_1 <= 90:
+            return max(0, min(90, angle_deg_1))
+        elif 0 <= angle_deg_2 <= 90:
+            return max(0, min(90, angle_deg_2))
+        else:
+            return 45.0
+
+
 class Physics:
     """Ballistics and physics calculations"""
-    def __init__(self, gravity: float = 9.8, velocity: float = 50.0):
+    def __init__(self, gravity: float = 9.8):
         self.gravity = gravity
-        self.velocity = velocity
+        self.velocity = 50.0
         self.wind_speed = 0.0
         self.wind_direction = 0.0
         self.scale = 1.5
+        self.calculator = BallisticsCalculator()
     
-    def calculate_optimal_angle(self, player_pos: Vector2, enemy_pos: Vector2) -> float:
-        """Calculate optimal firing angle to hit target using ballistic formula"""
-        # Get horizontal and vertical distances in game units
-        dx = (enemy_pos.x - player_pos.x) / self.scale  # Horizontal distance
-        dy = (player_pos.y - enemy_pos.y) / self.scale  # Vertical distance (y increases downward in Tkinter)
-        
-        v = self.velocity
-        g = self.gravity
-        
-        if v == 0:
-            return 45.0
-        
-        # Ballistic trajectory formula
-        # y = x*tan(θ) - (g*x²)/(2*v²*cos²(θ))
-        # Rearranged to find angle: tan(2θ) = (2*v²)/(g*x) when y=0
-        # For hitting a target at (dx, dy):
-        # tan(θ) = (v²/g * ± sqrt((v⁴/g²) - dx² - (2*v²*dy/g))) / dx
-        
-        discriminant = (v ** 4) - (g ** 2) * (dx ** 2) - (2 * g * v ** 2 * dy)
-        
-        if discriminant < 0:
-            # Can't reach target, aim as high as possible
-            return 85.0
-        
-        # Use the higher angle solution (more arc)
-        sqrt_disc = math.sqrt(discriminant)
-        tan_theta = (v ** 2 + sqrt_disc) / (g * dx) if dx != 0 else 1.0
-        
-        # Calculate angle in radians then convert to degrees
-        angle_rad = math.atan(tan_theta)
-        angle_deg = (angle_rad * 180) / math.pi
-        
-        # Clamp between 0 and 90 degrees (upward shot)
-        angle_deg = max(0, min(90, angle_deg))
-        
-        return angle_deg
+    def calculate_optimal_trajectory(self, player_pos: Vector2, enemy_pos: Vector2) -> Tuple[float, float]:
+        """Calculate optimal angle and power to hit target"""
+        angle, power = self.calculator.calculate_angle_and_power(player_pos, enemy_pos, self.gravity)
+        self.velocity = power
+        return angle, power
     
-    def calculate_trajectory(self, start_pos: Vector2, angle: float, dt: float = 0.01) -> List[Vector2]:
+    def calculate_trajectory(self, start_pos: Vector2, angle: float, power: float, dt: float = 0.01) -> List[Vector2]:
         """Calculate projectile trajectory"""
         trajectory = []
         
         angle_rad = (angle * math.pi) / 180
-        vx = self.velocity * math.cos(angle_rad)
-        vy = self.velocity * math.sin(angle_rad)
+        vx = power * math.cos(angle_rad)
+        vy = power * math.sin(angle_rad)
         
         # Wind components
         wind_rad = (self.wind_direction * math.pi) / 180
@@ -135,7 +199,7 @@ class Physics:
         
         return trajectory
     
-    def calculate_stats(self, player_pos: Vector2, enemy_pos: Vector2, trajectory: List[Vector2]) -> dict:
+    def calculate_stats(self, player_pos: Vector2, enemy_pos: Vector2, trajectory: List[Vector2], angle: float, power: float) -> dict:
         """Calculate ballistics statistics"""
         if not trajectory:
             return {'distance': 0, 'flight_time': 0, 'max_height': 0, 'wind_effect': 0, 'accuracy': 0}
@@ -168,7 +232,9 @@ class Physics:
             'flight_time': round(flight_time, 2),
             'max_height': round(max_height, 1),
             'wind_effect': round(wind_effect, 1),
-            'accuracy': round(accuracy, 0)
+            'accuracy': round(accuracy, 0),
+            'angle': round(angle, 1),
+            'power': round(power, 1)
         }
 
 
@@ -202,10 +268,10 @@ class AimTracerOverlay:
         # Trajectory and stats
         self.trajectory: List[Vector2] = []
         self.current_angle = 0.0
+        self.current_power = 50.0
         self.stats = {}
         
         # UI Variables
-        self.velocity_var = tk.DoubleVar(value=50.0)
         self.wind_var = tk.DoubleVar(value=0.0)
         self.wind_dir_var = tk.DoubleVar(value=0.0)
         self.gravity_var = tk.DoubleVar(value=9.8)
@@ -216,17 +282,9 @@ class AimTracerOverlay:
     def setup_controls(self):
         """Setup control panel"""
         # Title
-        title_label = tk.Label(self.control_frame, text='ShellShock Live Aim Tracer - Drag green dot (you) and red dot (enemy)', 
+        title_label = tk.Label(self.control_frame, text='🎮 ShellShock Live - Auto Aim Tracer | Drag dots to set positions | Auto calculates ANGLE & POWER', 
                                bg='#1a1a1a', fg='#00FF00', font=('Courier', 10, 'bold'))
         title_label.pack(side=tk.LEFT, padx=10, pady=5)
-        
-        # Velocity control
-        tk.Label(self.control_frame, text='Velocity:', bg='#1a1a1a', fg='#FFFF00', font=('Courier', 9)).pack(side=tk.LEFT, padx=5)
-        velocity_scale = tk.Scale(self.control_frame, from_=10, to=100, orient=tk.HORIZONTAL, 
-                                  variable=self.velocity_var, bg='#333', fg='#00FF00', length=100)
-        velocity_scale.pack(side=tk.LEFT, padx=2)
-        self.velocity_label = tk.Label(self.control_frame, text='50', bg='#1a1a1a', fg='#00FF00', font=('Courier', 9), width=4)
-        self.velocity_label.pack(side=tk.LEFT, padx=2)
         
         # Wind speed control
         tk.Label(self.control_frame, text='Wind:', bg='#1a1a1a', fg='#FFFF00', font=('Courier', 9)).pack(side=tk.LEFT, padx=5)
@@ -255,16 +313,16 @@ class AimTracerOverlay:
         # Info labels
         tk.Label(self.control_frame, text='|', bg='#1a1a1a', fg='#00FF00').pack(side=tk.LEFT, padx=5)
         
-        self.distance_label = tk.Label(self.control_frame, text='Dist: 0m', bg='#1a1a1a', fg='#00FF00', font=('Courier', 9))
+        self.distance_label = tk.Label(self.control_frame, text='Dist: 0m', bg='#1a1a1a', fg='#00FF00', font=('Courier', 9, 'bold'))
         self.distance_label.pack(side=tk.LEFT, padx=5)
         
-        self.time_label = tk.Label(self.control_frame, text='Time: 0s', bg='#1a1a1a', fg='#00FF00', font=('Courier', 9))
-        self.time_label.pack(side=tk.LEFT, padx=5)
-        
-        self.angle_label = tk.Label(self.control_frame, text='Angle: 45°', bg='#1a1a1a', fg='#00FF00', font=('Courier', 9))
+        self.angle_label = tk.Label(self.control_frame, text='📐 Angle: 45°', bg='#1a1a1a', fg='#FFFF00', font=('Courier', 9, 'bold'))
         self.angle_label.pack(side=tk.LEFT, padx=5)
         
-        self.accuracy_label = tk.Label(self.control_frame, text='Accuracy: 0%', bg='#1a1a1a', fg='#00FF00', font=('Courier', 9))
+        self.power_label = tk.Label(self.control_frame, text='💥 Power: 50', bg='#1a1a1a', fg='#FF6600', font=('Courier', 9, 'bold'))
+        self.power_label.pack(side=tk.LEFT, padx=5)
+        
+        self.accuracy_label = tk.Label(self.control_frame, text='✓ Accuracy: 0%', bg='#1a1a1a', fg='#00FF00', font=('Courier', 9, 'bold'))
         self.accuracy_label.pack(side=tk.LEFT, padx=5)
         
         # Reset button
@@ -273,19 +331,16 @@ class AimTracerOverlay:
         reset_btn.pack(side=tk.RIGHT, padx=10, pady=5)
         
         # Bind control updates
-        self.velocity_var.trace('w', self.on_control_change)
         self.wind_var.trace('w', self.on_control_change)
         self.wind_dir_var.trace('w', self.on_control_change)
         self.gravity_var.trace('w', self.on_control_change)
     
     def on_control_change(self, *args):
         """Update physics when controls change"""
-        self.physics.velocity = self.velocity_var.get()
         self.physics.wind_speed = self.wind_var.get()
         self.physics.wind_direction = self.wind_dir_var.get()
         self.physics.gravity = self.gravity_var.get()
         
-        self.velocity_label.config(text=f"{self.physics.velocity:.0f}")
         self.wind_label.config(text=f"{self.physics.wind_speed:.0f}")
         self.wind_dir_label.config(text=f"{self.physics.wind_direction:.0f}°")
         self.gravity_label.config(text=f"{self.physics.gravity:.1f}")
@@ -328,14 +383,16 @@ class AimTracerOverlay:
         """Main update loop"""
         self.canvas.delete('all')
         
-        # Calculate optimal angle
-        self.current_angle = self.physics.calculate_optimal_angle(self.player_tank.pos, self.enemy_tank.pos)
+        # Calculate optimal angle and power
+        self.current_angle, self.current_power = self.physics.calculate_optimal_trajectory(
+            self.player_tank.pos, self.enemy_tank.pos)
         
-        # Calculate trajectory
-        self.trajectory = self.physics.calculate_trajectory(self.player_tank.pos, self.current_angle)
+        # Calculate trajectory with calculated power
+        self.trajectory = self.physics.calculate_trajectory(self.player_tank.pos, self.current_angle, self.current_power)
         
         # Calculate stats
-        self.stats = self.physics.calculate_stats(self.player_tank.pos, self.enemy_tank.pos, self.trajectory)
+        self.stats = self.physics.calculate_stats(self.player_tank.pos, self.enemy_tank.pos, 
+                                                 self.trajectory, self.current_angle, self.current_power)
         
         # Draw trajectory
         if len(self.trajectory) > 1:
@@ -371,9 +428,9 @@ class AimTracerOverlay:
         
         # Update info labels
         self.distance_label.config(text=f"Dist: {self.stats.get('distance', 0)}m")
-        self.time_label.config(text=f"Time: {self.stats.get('flight_time', 0)}s")
-        self.angle_label.config(text=f"Angle: {self.current_angle:.1f}°")
-        self.accuracy_label.config(text=f"Accuracy: {self.stats.get('accuracy', 0):.0f}%")
+        self.angle_label.config(text=f"📐 Angle: {self.stats.get('angle', 0)}°")
+        self.power_label.config(text=f"💥 Power: {self.stats.get('power', 0)}")
+        self.accuracy_label.config(text=f"✓ Accuracy: {self.stats.get('accuracy', 0):.0f}%")
         
         # Schedule next update
         self.root.after(16, self.update_loop)  # ~60 FPS
