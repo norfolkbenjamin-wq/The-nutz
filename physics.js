@@ -1,11 +1,11 @@
-// ShellShock Live - Overlay Aim Tracer Physics Engine
-class OverlayAimTracer {
+// ShellShock Live - Automatic Overlay Aim Tracer
+class AutoAimTracer {
     constructor() {
         this.canvas = document.getElementById('canvas');
         this.ctx = this.canvas.getContext('2d');
         this.resizeCanvas();
         
-        // Tank positions (in screen coordinates)
+        // Tank positions
         this.playerTank = { x: 200, y: window.innerHeight - 150, radius: 15 };
         this.enemyTank = { x: window.innerWidth - 200, y: window.innerHeight - 150, radius: 15 };
         
@@ -13,22 +13,15 @@ class OverlayAimTracer {
         this.draggingTank = null;
         this.dragOffset = { x: 0, y: 0 };
         
-        // Physics parameters
-        this.angle = 45;
+        // Auto-calculated physics
+        this.angle = 0;
         this.velocity = 50;
         this.gravity = 9.8;
         this.windSpeed = 0;
         this.windDirection = 0;
         
-        // Scale factor
         this.scale = 1.5;
-        
-        // Trajectory points
         this.trajectoryPoints = [];
-        
-        // Overlay visibility
-        this.showTrajectory = true;
-        this.showTanks = true;
         
         this.setupEventListeners();
         this.animate();
@@ -42,13 +35,16 @@ class OverlayAimTracer {
     setupEventListeners() {
         window.addEventListener('resize', () => this.resizeCanvas());
         
-        // Canvas mouse events
         this.canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
         this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
         this.canvas.addEventListener('mouseup', (e) => this.onMouseUp(e));
         this.canvas.addEventListener('mouseleave', (e) => this.onMouseUp(e));
         
-        // Control sliders
+        document.getElementById('velocitySlider').addEventListener('input', (e) => {
+            this.velocity = parseFloat(e.target.value);
+            document.getElementById('velocityValue').textContent = `${this.velocity}`;
+        });
+        
         document.getElementById('windSlider').addEventListener('input', (e) => {
             this.windSpeed = parseFloat(e.target.value);
             document.getElementById('windValue').textContent = `${this.windSpeed}`;
@@ -58,34 +54,17 @@ class OverlayAimTracer {
             this.windDirection = parseFloat(e.target.value);
             document.getElementById('windDirValue').textContent = `${this.windDirection}°`;
         });
-        
-        document.getElementById('angleSlider').addEventListener('input', (e) => {
-            this.angle = parseFloat(e.target.value);
-            document.getElementById('angleValue').textContent = `${this.angle}°`;
-        });
-        
-        document.getElementById('velocitySlider').addEventListener('input', (e) => {
-            this.velocity = parseFloat(e.target.value);
-            document.getElementById('velocityValue').textContent = `${this.velocity}`;
-        });
-        
-        document.getElementById('gravitySlider').addEventListener('input', (e) => {
-            this.gravity = parseFloat(e.target.value);
-            document.getElementById('gravityValue').textContent = `${this.gravity}`;
-        });
     }
     
     onMouseDown(e) {
         const x = e.clientX;
         const y = e.clientY;
         
-        // Check if clicking on player tank
         if (this.distance(x, y, this.playerTank.x, this.playerTank.y) < this.playerTank.radius + 15) {
             this.draggingTank = 'player';
             this.dragOffset.x = x - this.playerTank.x;
             this.dragOffset.y = y - this.playerTank.y;
         }
-        // Check if clicking on enemy tank
         else if (this.distance(x, y, this.enemyTank.x, this.enemyTank.y) < this.enemyTank.radius + 15) {
             this.draggingTank = 'enemy';
             this.dragOffset.x = x - this.enemyTank.x;
@@ -116,11 +95,45 @@ class OverlayAimTracer {
         return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
     }
     
+    // Auto-calculate optimal angle using ballistics
+    calculateOptimalAngle() {
+        const dx = this.enemyTank.x - this.playerTank.x;
+        const dy = (this.playerTank.y - this.enemyTank.y); // Height difference
+        const distance = Math.sqrt(dx * dx + dy * dy) / this.scale;
+        
+        // Ballistic equation: tan(2θ) = (g*d) / v²
+        // Simplified for optimal angle (45° for max range, adjusted for height)
+        
+        const g = this.gravity;
+        const v = this.velocity;
+        
+        if (v === 0) return 45;
+        
+        // Calculate angle considering height difference
+        const horizontalDist = dx / this.scale;
+        const verticalDist = dy / this.scale;
+        
+        // Use inverse tangent to aim at target
+        let angleRad = Math.atan2(verticalDist, horizontalDist);
+        
+        // Adjust for ballistics - add extra angle for projectile arc
+        const maxRangeAngle = Math.PI / 4; // 45 degrees
+        angleRad = (angleRad + maxRangeAngle) / 2;
+        
+        // Clamp between 0 and 180 degrees
+        let angleDeg = (angleRad * 180) / Math.PI;
+        angleDeg = Math.max(0, Math.min(180, angleDeg));
+        
+        return angleDeg;
+    }
+    
     calculateTrajectory() {
         this.trajectoryPoints = [];
         
-        const angleRad = (this.angle * Math.PI) / 180;
+        // Auto-calculate angle
+        this.angle = this.calculateOptimalAngle();
         
+        const angleRad = (this.angle * Math.PI) / 180;
         const vx = this.velocity * Math.cos(angleRad);
         const vy = this.velocity * Math.sin(angleRad);
         
@@ -161,7 +174,8 @@ class OverlayAimTracer {
                 distance: 0,
                 flightTime: 0,
                 maxHeight: 0,
-                windEffect: 0
+                windEffect: 0,
+                accuracy: 0
             };
         }
         
@@ -181,11 +195,17 @@ class OverlayAimTracer {
         const windRad = (this.windDirection * Math.PI) / 180;
         const windEffect = (this.windSpeed * Math.cos(windRad)) * flightTime;
         
+        // Calculate accuracy (how close impact is to enemy)
+        const lastPoint = this.trajectoryPoints[this.trajectoryPoints.length - 1];
+        const impactDist = this.distance(lastPoint.x, lastPoint.y, this.enemyTank.x, this.enemyTank.y);
+        const accuracy = Math.max(0, 100 - impactDist / 2);
+        
         return {
             distance: distance.toFixed(1),
             flightTime: flightTime.toFixed(2),
             maxHeight: maxHeight.toFixed(1),
-            windEffect: windEffect.toFixed(1)
+            windEffect: windEffect.toFixed(1),
+            accuracy: accuracy.toFixed(0)
         };
     }
     
@@ -196,13 +216,14 @@ class OverlayAimTracer {
         document.getElementById('flightTime').textContent = `${stats.flightTime} s`;
         document.getElementById('maxHeight').textContent = `${stats.maxHeight} m`;
         document.getElementById('windEffect').textContent = `${stats.windEffect} m`;
+        document.getElementById('accuracy').textContent = `${stats.accuracy}%`;
+        document.getElementById('angleValue').textContent = `${this.angle.toFixed(1)}°`;
     }
     
     draw() {
-        // Clear canvas (transparent)
         this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
-        if (this.showTrajectory && this.trajectoryPoints.length > 1) {
+        if (this.trajectoryPoints.length > 1) {
             // Draw trajectory
             this.ctx.strokeStyle = 'rgba(255, 255, 0, 0.8)';
             this.ctx.lineWidth = 2;
@@ -237,41 +258,36 @@ class OverlayAimTracer {
             this.ctx.stroke();
         }
         
-        if (this.showTanks) {
-            // Draw player tank
-            this.drawTank(this.playerTank, '#00FF00', '🟢');
-            
-            // Draw enemy tank
-            this.drawTank(this.enemyTank, '#FF0000', '🔴');
-            
-            // Draw cannon
-            this.drawCannon(this.playerTank, '#00FF00');
-            
-            // Draw distance line
-            this.ctx.strokeStyle = 'rgba(0, 255, 0, 0.3)';
-            this.ctx.lineWidth = 1;
-            this.ctx.setLineDash([3, 3]);
-            this.ctx.beginPath();
-            this.ctx.moveTo(this.playerTank.x, this.playerTank.y);
-            this.ctx.lineTo(this.enemyTank.x, this.enemyTank.y);
-            this.ctx.stroke();
-            this.ctx.setLineDash([]);
-        }
+        // Draw player tank
+        this.drawTank(this.playerTank, '#00FF00', '🟢');
+        
+        // Draw enemy tank
+        this.drawTank(this.enemyTank, '#FF0000', '🔴');
+        
+        // Draw cannon
+        this.drawCannon(this.playerTank, '#00FF00');
+        
+        // Draw distance line
+        this.ctx.strokeStyle = 'rgba(0, 255, 0, 0.3)';
+        this.ctx.lineWidth = 1;
+        this.ctx.setLineDash([3, 3]);
+        this.ctx.beginPath();
+        this.ctx.moveTo(this.playerTank.x, this.playerTank.y);
+        this.ctx.lineTo(this.enemyTank.x, this.enemyTank.y);
+        this.ctx.stroke();
+        this.ctx.setLineDash([]);
     }
     
     drawTank(tank, color, emoji) {
-        // Tank body
         this.ctx.fillStyle = color;
         this.ctx.globalAlpha = 0.8;
         this.ctx.fillRect(tank.x - tank.radius, tank.y - tank.radius, tank.radius * 2, tank.radius * 2);
         
-        // Tank outline
         this.ctx.strokeStyle = '#FFFFFF';
         this.ctx.lineWidth = 2;
         this.ctx.globalAlpha = 1;
         this.ctx.strokeRect(tank.x - tank.radius, tank.y - tank.radius, tank.radius * 2, tank.radius * 2);
         
-        // Emoji
         this.ctx.font = 'bold 16px Arial';
         this.ctx.textAlign = 'center';
         this.ctx.textBaseline = 'middle';
@@ -302,17 +318,10 @@ class OverlayAimTracer {
     }
 }
 
-// Global functions
 function resetPositions() {
-    const tracer = window.overlayTracer;
+    const tracer = window.autoTracer;
     tracer.playerTank = { x: 200, y: window.innerHeight - 150, radius: 15 };
     tracer.enemyTank = { x: window.innerWidth - 200, y: window.innerHeight - 150, radius: 15 };
-}
-
-function toggleOverlay() {
-    const tracer = window.overlayTracer;
-    tracer.showTrajectory = !tracer.showTrajectory;
-    tracer.showTanks = !tracer.showTanks;
 }
 
 function toggleControls() {
@@ -322,15 +331,14 @@ function toggleControls() {
     controls.classList.toggle('hidden');
     
     if (controls.classList.contains('hidden')) {
-        btn.textContent = '▶ Show Controls';
+        btn.textContent = '▶ Show';
         btn.classList.add('collapsed');
     } else {
-        btn.textContent = '▼ Hide Controls';
+        btn.textContent = '▼ Hide';
         btn.classList.remove('collapsed');
     }
 }
 
-// Initialize on page load
 window.addEventListener('DOMContentLoaded', () => {
-    window.overlayTracer = new OverlayAimTracer();
+    window.autoTracer = new AutoAimTracer();
 });
