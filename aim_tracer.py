@@ -1,0 +1,379 @@
+#!/usr/bin/env python3.14
+"""
+ShellShock Live - Automatic Aim Tracer Overlay
+A Python overlay tool that calculates ballistics and wind physics in real-time
+"""
+
+import tkinter as tk
+from tkinter import Canvas
+import math
+import time
+from dataclasses import dataclass
+from typing import List, Tuple
+
+
+@dataclass
+class Vector2:
+    """2D Vector for positions"""
+    x: float
+    y: float
+    
+    def distance_to(self, other: 'Vector2') -> float:
+        """Calculate distance to another vector"""
+        return math.sqrt((other.x - self.x) ** 2 + (other.y - self.y) ** 2)
+    
+    def __add__(self, other: 'Vector2') -> 'Vector2':
+        return Vector2(self.x + other.x, self.y + other.y)
+    
+    def __sub__(self, other: 'Vector2') -> 'Vector2':
+        return Vector2(self.x - other.x, self.y - other.y)
+    
+    def __mul__(self, scalar: float) -> 'Vector2':
+        return Vector2(self.x * scalar, self.y * scalar)
+
+
+class Tank:
+    """Represents a tank with position and rendering"""
+    def __init__(self, x: float, y: float, color: str, label: str):
+        self.pos = Vector2(x, y)
+        self.radius = 15
+        self.color = color
+        self.label = label
+        self.dragging = False
+        self.drag_offset = Vector2(0, 0)
+    
+    def contains_point(self, x: float, y: float) -> bool:
+        """Check if point is within tank bounds"""
+        return self.pos.distance_to(Vector2(x, y)) < self.radius + 15
+    
+    def draw(self, canvas: Canvas, scale: float = 1.0):
+        """Draw tank on canvas"""
+        x1 = self.pos.x - self.radius
+        y1 = self.pos.y - self.radius
+        x2 = self.pos.x + self.radius
+        y2 = self.pos.y + self.radius
+        
+        canvas.create_rectangle(x1, y1, x2, y2, fill=self.color, outline='white', width=2)
+        canvas.create_text(self.pos.x, self.pos.y, text=self.label, fill=self.color, font=('Arial', 14, 'bold'))
+
+
+class Physics:
+    """Ballistics and physics calculations"""
+    def __init__(self, gravity: float = 9.8, velocity: float = 50.0):
+        self.gravity = gravity
+        self.velocity = velocity
+        self.wind_speed = 0.0
+        self.wind_direction = 0.0
+        self.scale = 1.5
+    
+    def calculate_optimal_angle(self, player_pos: Vector2, enemy_pos: Vector2) -> float:
+        """Calculate optimal firing angle to hit target"""
+        dx = enemy_pos.x - player_pos.x
+        dy = player_pos.y - enemy_pos.y
+        
+        distance = math.sqrt(dx ** 2 + dy ** 2) / self.scale
+        
+        if self.velocity == 0:
+            return 45.0
+        
+        horizontal_dist = dx / self.scale
+        vertical_dist = dy / self.scale
+        
+        # Calculate angle towards target
+        angle_rad = math.atan2(vertical_dist, horizontal_dist)
+        
+        # Adjust for ballistic arc
+        max_range_angle = math.pi / 4
+        angle_rad = (angle_rad + max_range_angle) / 2
+        
+        # Convert to degrees and clamp
+        angle_deg = (angle_rad * 180) / math.pi
+        angle_deg = max(0, min(180, angle_deg))
+        
+        return angle_deg
+    
+    def calculate_trajectory(self, start_pos: Vector2, angle: float, dt: float = 0.01) -> List[Vector2]:
+        """Calculate projectile trajectory"""
+        trajectory = []
+        
+        angle_rad = (angle * math.pi) / 180
+        vx = self.velocity * math.cos(angle_rad)
+        vy = self.velocity * math.sin(angle_rad)
+        
+        # Wind components
+        wind_rad = (self.wind_direction * math.pi) / 180
+        wind_vx = self.wind_speed * math.cos(wind_rad)
+        wind_vy = self.wind_speed * math.sin(wind_rad)
+        
+        x = start_pos.x / self.scale
+        y = (start_pos.y / self.scale)
+        
+        vx_curr = vx + wind_vx * 0.1
+        vy_curr = vy
+        t = 0
+        
+        while y > 0 and t < 100:
+            trajectory.append(Vector2(x * self.scale, y * self.scale))
+            
+            vy_curr -= self.gravity * dt
+            vx_curr += (wind_vx * 0.01)
+            
+            x += vx_curr * dt
+            y += vy_curr * dt
+            t += dt
+        
+        return trajectory
+    
+    def calculate_stats(self, player_pos: Vector2, enemy_pos: Vector2, trajectory: List[Vector2]) -> dict:
+        """Calculate ballistics statistics"""
+        if not trajectory:
+            return {'distance': 0, 'flight_time': 0, 'max_height': 0, 'wind_effect': 0}
+        
+        dx = enemy_pos.x - player_pos.x
+        dy = enemy_pos.y - player_pos.y
+        distance = math.sqrt(dx ** 2 + dy ** 2) / self.scale
+        
+        flight_time = (len(trajectory) * 0.01)
+        
+        max_height = 0
+        for point in trajectory:
+            height = point.y
+            if height > max_height:
+                max_height = height
+        
+        wind_rad = (self.wind_direction * math.pi) / 180
+        wind_effect = (self.wind_speed * math.cos(wind_rad)) * flight_time
+        
+        # Calculate accuracy
+        if trajectory:
+            last_point = trajectory[-1]
+            impact_dist = last_point.distance_to(enemy_pos)
+            accuracy = max(0, 100 - impact_dist / 2)
+        else:
+            accuracy = 0
+        
+        return {
+            'distance': round(distance, 1),
+            'flight_time': round(flight_time, 2),
+            'max_height': round(max_height, 1),
+            'wind_effect': round(wind_effect, 1),
+            'accuracy': round(accuracy, 0)
+        }
+
+
+class AimTracerOverlay:
+    """Main overlay application"""
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.root.title("ShellShock Live - Aim Tracer")
+        self.root.geometry("1280x720")
+        self.root.attributes('-topmost', True)
+        self.root.attributes('-alpha', 0.95)
+        
+        # Canvas setup
+        self.canvas = Canvas(root, bg='black', highlightthickness=0, cursor='crosshair')
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.canvas.bind('<Button-1>', self.on_mouse_down)
+        self.canvas.bind('<B1-Motion>', self.on_mouse_move)
+        self.canvas.bind('<ButtonRelease-1>', self.on_mouse_up)
+        
+        # Control frame
+        self.control_frame = tk.Frame(root, bg='#1a1a1a', relief=tk.SUNKEN, bd=2)
+        self.control_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Physics engine
+        self.physics = Physics()
+        
+        # Tanks
+        self.player_tank = Tank(200, 600, '#00FF00', '🟢')
+        self.enemy_tank = Tank(1080, 600, '#FF0000', '🔴')
+        
+        # Trajectory and stats
+        self.trajectory: List[Vector2] = []
+        self.current_angle = 0.0
+        self.stats = {}
+        
+        # UI Variables
+        self.velocity_var = tk.DoubleVar(value=50.0)
+        self.wind_var = tk.DoubleVar(value=0.0)
+        self.wind_dir_var = tk.DoubleVar(value=0.0)
+        self.gravity_var = tk.DoubleVar(value=9.8)
+        
+        self.setup_controls()
+        self.update_loop()
+    
+    def setup_controls(self):
+        """Setup control panel"""
+        # Title
+        title_label = tk.Label(self.control_frame, text='ShellShock Live Aim Tracer - Drag green dot (you) and red dot (enemy)', 
+                               bg='#1a1a1a', fg='#00FF00', font=('Courier', 10, 'bold'))
+        title_label.pack(side=tk.LEFT, padx=10, pady=5)
+        
+        # Velocity control
+        tk.Label(self.control_frame, text='Velocity:', bg='#1a1a1a', fg='#FFFF00', font=('Courier', 9)).pack(side=tk.LEFT, padx=5)
+        velocity_scale = tk.Scale(self.control_frame, from_=10, to=100, orient=tk.HORIZONTAL, 
+                                  variable=self.velocity_var, bg='#333', fg='#00FF00', length=100)
+        velocity_scale.pack(side=tk.LEFT, padx=2)
+        self.velocity_label = tk.Label(self.control_frame, text='50', bg='#1a1a1a', fg='#00FF00', font=('Courier', 9), width=4)
+        self.velocity_label.pack(side=tk.LEFT, padx=2)
+        
+        # Wind speed control
+        tk.Label(self.control_frame, text='Wind:', bg='#1a1a1a', fg='#FFFF00', font=('Courier', 9)).pack(side=tk.LEFT, padx=5)
+        wind_scale = tk.Scale(self.control_frame, from_=-50, to=50, orient=tk.HORIZONTAL, 
+                             variable=self.wind_var, bg='#333', fg='#00FF00', length=100)
+        wind_scale.pack(side=tk.LEFT, padx=2)
+        self.wind_label = tk.Label(self.control_frame, text='0', bg='#1a1a1a', fg='#00FF00', font=('Courier', 9), width=4)
+        self.wind_label.pack(side=tk.LEFT, padx=2)
+        
+        # Wind direction control
+        tk.Label(self.control_frame, text='Dir:', bg='#1a1a1a', fg='#FFFF00', font=('Courier', 9)).pack(side=tk.LEFT, padx=5)
+        wind_dir_scale = tk.Scale(self.control_frame, from_=0, to=360, orient=tk.HORIZONTAL, 
+                                  variable=self.wind_dir_var, bg='#333', fg='#00FF00', length=100)
+        wind_dir_scale.pack(side=tk.LEFT, padx=2)
+        self.wind_dir_label = tk.Label(self.control_frame, text='0°', bg='#1a1a1a', fg='#00FF00', font=('Courier', 9), width=4)
+        self.wind_dir_label.pack(side=tk.LEFT, padx=2)
+        
+        # Gravity control
+        tk.Label(self.control_frame, text='G:', bg='#1a1a1a', fg='#FFFF00', font=('Courier', 9)).pack(side=tk.LEFT, padx=5)
+        gravity_scale = tk.Scale(self.control_frame, from_=5, to=30, orient=tk.HORIZONTAL, 
+                                variable=self.gravity_var, bg='#333', fg='#00FF00', length=100, resolution=0.1)
+        gravity_scale.pack(side=tk.LEFT, padx=2)
+        self.gravity_label = tk.Label(self.control_frame, text='9.8', bg='#1a1a1a', fg='#00FF00', font=('Courier', 9), width=4)
+        self.gravity_label.pack(side=tk.LEFT, padx=2)
+        
+        # Info labels
+        tk.Label(self.control_frame, text='|', bg='#1a1a1a', fg='#00FF00').pack(side=tk.LEFT, padx=5)
+        
+        self.distance_label = tk.Label(self.control_frame, text='Dist: 0m', bg='#1a1a1a', fg='#00FF00', font=('Courier', 9))
+        self.distance_label.pack(side=tk.LEFT, padx=5)
+        
+        self.time_label = tk.Label(self.control_frame, text='Time: 0s', bg='#1a1a1a', fg='#00FF00', font=('Courier', 9))
+        self.time_label.pack(side=tk.LEFT, padx=5)
+        
+        self.angle_label = tk.Label(self.control_frame, text='Angle: 45°', bg='#1a1a1a', fg='#00FF00', font=('Courier', 9))
+        self.angle_label.pack(side=tk.LEFT, padx=5)
+        
+        self.accuracy_label = tk.Label(self.control_frame, text='Accuracy: 0%', bg='#1a1a1a', fg='#00FF00', font=('Courier', 9))
+        self.accuracy_label.pack(side=tk.LEFT, padx=5)
+        
+        # Reset button
+        reset_btn = tk.Button(self.control_frame, text='Reset', command=self.reset_positions, 
+                             bg='#00FF00', fg='#000000', font=('Courier', 9, 'bold'), padx=10)
+        reset_btn.pack(side=tk.RIGHT, padx=10, pady=5)
+        
+        # Bind control updates
+        self.velocity_var.trace('w', self.on_control_change)
+        self.wind_var.trace('w', self.on_control_change)
+        self.wind_dir_var.trace('w', self.on_control_change)
+        self.gravity_var.trace('w', self.on_control_change)
+    
+    def on_control_change(self, *args):
+        """Update physics when controls change"""
+        self.physics.velocity = self.velocity_var.get()
+        self.physics.wind_speed = self.wind_var.get()
+        self.physics.wind_direction = self.wind_dir_var.get()
+        self.physics.gravity = self.gravity_var.get()
+        
+        self.velocity_label.config(text=f"{self.physics.velocity:.0f}")
+        self.wind_label.config(text=f"{self.physics.wind_speed:.0f}")
+        self.wind_dir_label.config(text=f"{self.physics.wind_direction:.0f}°")
+        self.gravity_label.config(text=f"{self.physics.gravity:.1f}")
+    
+    def on_mouse_down(self, event):
+        """Handle mouse down"""
+        if self.player_tank.contains_point(event.x, event.y):
+            self.player_tank.dragging = True
+            self.player_tank.drag_offset = Vector2(event.x - self.player_tank.pos.x, 
+                                                   event.y - self.player_tank.pos.y)
+        elif self.enemy_tank.contains_point(event.x, event.y):
+            self.enemy_tank.dragging = True
+            self.enemy_tank.drag_offset = Vector2(event.x - self.enemy_tank.pos.x, 
+                                                  event.y - self.enemy_tank.pos.y)
+    
+    def on_mouse_move(self, event):
+        """Handle mouse move"""
+        if self.player_tank.dragging:
+            self.player_tank.pos.x = max(0, min(self.canvas.winfo_width(), 
+                                                 event.x - self.player_tank.drag_offset.x))
+            self.player_tank.pos.y = max(0, min(self.canvas.winfo_height(), 
+                                                 event.y - self.player_tank.drag_offset.y))
+        elif self.enemy_tank.dragging:
+            self.enemy_tank.pos.x = max(0, min(self.canvas.winfo_width(), 
+                                               event.x - self.enemy_tank.drag_offset.x))
+            self.enemy_tank.pos.y = max(0, min(self.canvas.winfo_height(), 
+                                               event.y - self.enemy_tank.drag_offset.y))
+    
+    def on_mouse_up(self, event):
+        """Handle mouse up"""
+        self.player_tank.dragging = False
+        self.enemy_tank.dragging = False
+    
+    def reset_positions(self):
+        """Reset tank positions"""
+        self.player_tank.pos = Vector2(200, 600)
+        self.enemy_tank.pos = Vector2(self.canvas.winfo_width() - 200, 600)
+    
+    def update_loop(self):
+        """Main update loop"""
+        self.canvas.delete('all')
+        
+        # Calculate optimal angle
+        self.current_angle = self.physics.calculate_optimal_angle(self.player_tank.pos, self.enemy_tank.pos)
+        
+        # Calculate trajectory
+        self.trajectory = self.physics.calculate_trajectory(self.player_tank.pos, self.current_angle)
+        
+        # Calculate stats
+        self.stats = self.physics.calculate_stats(self.player_tank.pos, self.enemy_tank.pos, self.trajectory)
+        
+        # Draw trajectory
+        if len(self.trajectory) > 1:
+            points = [(int(p.x), int(p.y)) for p in self.trajectory]
+            self.canvas.create_line(points, fill='#FFFF00', width=2, dash=(5, 5))
+            
+            # Draw impact point
+            last_point = self.trajectory[-1]
+            self.canvas.create_oval(last_point.x - 20, last_point.y - 20, 
+                                   last_point.x + 20, last_point.y + 20, 
+                                   outline='#FF0000', width=2)
+            self.canvas.create_line(last_point.x - 15, last_point.y, 
+                                   last_point.x + 15, last_point.y, fill='#FF0000')
+            self.canvas.create_line(last_point.x, last_point.y - 15, 
+                                   last_point.x, last_point.y + 15, fill='#FF0000')
+        
+        # Draw distance line
+        self.canvas.create_line(self.player_tank.pos.x, self.player_tank.pos.y,
+                               self.enemy_tank.pos.x, self.enemy_tank.pos.y,
+                               fill='#00FF00', width=1, dash=(3, 3))
+        
+        # Draw tanks
+        self.player_tank.draw(self.canvas)
+        self.enemy_tank.draw(self.canvas)
+        
+        # Draw cannon line
+        angle_rad = (self.current_angle * math.pi) / 180
+        cannon_length = 30
+        cannon_end_x = self.player_tank.pos.x + cannon_length * math.cos(angle_rad)
+        cannon_end_y = self.player_tank.pos.y - cannon_length * math.sin(angle_rad)
+        self.canvas.create_line(self.player_tank.pos.x, self.player_tank.pos.y,
+                               cannon_end_x, cannon_end_y, fill='#00FF00', width=3)
+        
+        # Update info labels
+        self.distance_label.config(text=f"Dist: {self.stats.get('distance', 0)}m")
+        self.time_label.config(text=f"Time: {self.stats.get('flight_time', 0)}s")
+        self.angle_label.config(text=f"Angle: {self.current_angle:.1f}°")
+        self.accuracy_label.config(text=f"Accuracy: {self.stats.get('accuracy', 0):.0f}%")
+        
+        # Schedule next update
+        self.root.after(16, self.update_loop)  # ~60 FPS
+
+
+def main():
+    """Main entry point"""
+    root = tk.Tk()
+    app = AimTracerOverlay(root)
+    root.mainloop()
+
+
+if __name__ == '__main__':
+    main()
